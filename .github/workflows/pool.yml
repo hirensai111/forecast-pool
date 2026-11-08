@@ -2,7 +2,7 @@ name: forecast-pool
 
 on:
   schedule:
-    - cron: "12,27,42,57 * * * *"  # tick: every 15 min, offset from the quarter hour
+    - cron: "7,22,37,52 * * * *"  # tick: every 15 min, offset from the quarter hour
     - cron: "45 12 * * *"    # candidates: 18:15 IST
     - cron: "15 3 * * *"     # score: 08:45 IST
   workflow_dispatch:
