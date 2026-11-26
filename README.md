@@ -25,8 +25,10 @@ terms before you start.
   `mid_at_seen` the first tick it sees a row, so nothing can be back-dated.
 - **Trade rule.** Buy YES if `prob_yes - yes_ask >= 0.05`; buy NO if `(1 - prob_yes) - no_ask >= 0.05`.
   One position per bot per market, held to settlement.
-- **Fills.** At the ask, only up to the size resting at the best level, plus Kalshi's taker fee
-  `round_up(0.07 x C x P x (1 - P))`. Total cost + fee per market is capped at $50, and at the bot's cash.
+- **Fills.** The script walks the order book: it buys at the best ask, then at each next price up, as long as
+  that price still leaves the full 5-point edge (a forecast of 0.60 buys YES at up to 0.55). Each price level
+  pays Kalshi's taker fee `round_up(0.07 x C x P x (1 - P))`; the trade records the average price. Total cost +
+  fee per market is capped at $50, and at the bot's cash. Longshot Fader still buys only at the best ask.
 - **Baselines.** *Market* forecasts the mid at slate entry and never trades. *Longshot Fader* buys the
   other side of anything priced under 15 cents.
 - **Scoring.** Brier score per market (a bot's rows on one market are averaged first), compared with the
