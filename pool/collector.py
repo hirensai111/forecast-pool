@@ -77,6 +77,7 @@ def snapshot(kalshi, ledger, now):
             "no_bid": ob["no_bid"] if ob["no_bid"] is not None else num(m, "no_bid"),
             "no_ask": ob["no_ask"] if ob["no_ask"] is not None else num(m, "no_ask"),
             "yes_ask_depth": ob["yes_ask_depth"], "no_ask_depth": ob["no_ask_depth"],
+            "yes_ask_levels": ob.get("yes_ask_levels") or [], "no_ask_levels": ob.get("no_ask_levels") or [],
             "last_price": num(m, "last_price"), "volume_24h": num(m, "volume_24h"),
             "open_interest": num(m, "open_interest"),
         }

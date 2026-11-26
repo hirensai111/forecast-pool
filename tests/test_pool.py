@@ -105,7 +105,8 @@ def test_full_cycle():
 
     checks = {b: led.records(f"F_{b}")[0]["check"] for b in
               ("Newshound", "Historian", "Quant", "Contrarian", "Ensemble")}
-    assert checks["Newshound"].startswith("ok, bought 100 YES at 0.41")
+    # 0.55 leaves the 5-point edge up to 0.50, so it buys all 100 at 0.41 and then 16 more at 0.42.
+    assert checks["Newshound"] == "ok, bought 116 YES at 0.41 over 2 prices up to 0.42"
     assert checks["Historian"] == "ok, no edge"
     assert checks["Quant"].startswith("ok, bought")
     assert checks["Contrarian"].startswith("bad prob_yes")
@@ -113,7 +114,7 @@ def test_full_cycle():
 
     trades = led.records("Trades")
     news = next(t for t in trades if t["bot"] == "Newshound")
-    assert news["contracts"] == 100 and news["cost"] == 41.0 and news["fee"] == 1.70
+    assert news["contracts"] == 116 and news["cost"] == 47.72 and news["fee"] == 1.98
     fader = next(t for t in trades if t["bot"] == "Longshot Fader")
     assert fader["side"] == "NO" and fader["ticker"] == "WX-B"
     assert all(float(t["cost"]) + float(t["fee"]) <= 50 for t in trades)
@@ -131,12 +132,39 @@ def test_full_cycle():
     k.m["WX-B"].update(status="finalized", result="no")
     assert paper_trader.settle(k, led, later) == 2
     news = next(t for t in led.records("Trades") if t["bot"] == "Newshound")
-    assert news["status"] == "settled" and news["pnl"] == pytest.approx(57.30)
+    assert news["status"] == "settled" and news["pnl"] == pytest.approx(66.30)
 
     board = {r[1]: r for r in scorer.score(led, later)}
     # Newshound said 0.55 on a YES market priced 0.40: better than the market.
     assert board["Newshound"][6] < 0
     assert board["Historian"][6] == pytest.approx(0.0)
     assert board["Market"][6] == 0.0
-    assert board["Newshound"][11] == pytest.approx(57.30)
+    assert board["Newshound"][11] == pytest.approx(66.30)
     assert led.records("Calibration") and led.records("ByCategory")
+
+
+def test_walks_the_book_only_while_the_edge_holds():
+    led = MemoryLedger()
+    snap = {"ticker": "X", "category": "sports"}
+    levels = [(0.20, 5), (0.22, 10), (0.30, 500)]
+    # Forecast 0.30: limit 0.25, so 0.20 and 0.22 fill and 0.30 is skipped.
+    book = paper_trader.Book(led)
+    tid, note = book.open_position(NOW, "Quant", snap, "YES", 0.20, 5, 0.30, levels, 0.25)
+    t = book.new[0]
+    assert t["contracts"] == 15 and t["cost"] == 3.20 and note.endswith("over 2 prices up to 0.22")
+    # Forecast 0.40: limit 0.35, so it reaches 0.30 and stops at the $50 cap.
+    book = paper_trader.Book(led)
+    book.open_position(NOW, "Quant", snap, "YES", 0.20, 5, 0.40, levels, 0.35)
+    t = book.new[0]
+    assert t["cost"] + t["fee"] <= 50 and t["cost"] + t["fee"] > 49 and t["contracts"] > 150
+    # Without levels it buys only what rests at the best ask, as before.
+    book = paper_trader.Book(led)
+    book.open_position(NOW, "Quant", snap, "YES", 0.20, 5, 0.40)
+    assert book.new[0]["contracts"] == 5
+
+
+def test_orderbook_ladder():
+    ob = parse_orderbook({"orderbook_fp": {"yes_dollars": [["0.3000", "100.00"], ["0.2900", "50.00"]],
+                                           "no_dollars": [["0.6500", "40.00"], ["0.6400", "70.00"]]}})
+    assert ob["yes_ask_levels"] == [(0.35, 40.0), (0.36, 70.0)]
+    assert ob["no_ask_levels"] == [(0.70, 100.0), (0.71, 50.0)]

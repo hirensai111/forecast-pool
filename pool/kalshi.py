@@ -41,6 +41,19 @@ def best_level(levels):
     return best
 
 
+def ladder(levels):
+    """Bid levels [[price, count], ...] as (price, count) pairs, highest price first."""
+    out = []
+    for lvl in levels or []:
+        try:
+            p, c = float(lvl[0]), float(lvl[1])
+        except (TypeError, ValueError, IndexError):
+            continue
+        if c > 0:
+            out.append((p, c))
+    return sorted(out, key=lambda x: -x[0])
+
+
 def parse_orderbook(payload):
     """Kalshi returns bids only. YES ask = 1 - best NO bid, and its size is that bid's size."""
     ob = payload.get("orderbook_fp") or {}
@@ -55,6 +68,9 @@ def parse_orderbook(payload):
         "yes_ask": round(1 - nb, 4) if nb is not None else None,
         "no_ask": round(1 - yb, 4) if yb is not None else None,
         "yes_ask_depth": nb_qty, "no_ask_depth": yb_qty,
+        # Every price a buyer could pay, cheapest first: YES asks come from NO bids and vice versa.
+        "yes_ask_levels": [(round(1 - p, 4), c) for p, c in ladder(no_lv)],
+        "no_ask_levels": [(round(1 - p, 4), c) for p, c in ladder(yes_lv)],
     }
 
 
@@ -111,6 +127,6 @@ class Kalshi:
             data = self._get(f"/historical/markets/{ticker}", allow_404=True)
         return (data or {}).get("market")
 
-    def orderbook(self, ticker, depth=5):
+    def orderbook(self, ticker, depth=10):
         data = self._get(f"/markets/{ticker}/orderbook", {"depth": depth}, allow_404=True)
         return parse_orderbook(data or {})

@@ -39,25 +39,48 @@ class Book:
     def next_id(self):
         return f"T{len(self.all()) + 1:05d}"
 
-    def open_position(self, now, bot, snap, side, price, depth, prob):
-        """Size within the per-market cap, the bot's cash and the visible depth. Returns trade id or None."""
+    def open_position(self, now, bot, snap, side, price, depth, prob, levels=None, limit=None):
+        """Buy within the per-market cap and the bot's cash. Returns (trade id or None, note).
+
+        With the order book's levels and a limit price, it walks the book: it buys at the best ask,
+        then at each next price up, as long as that price still leaves the full edge (price <= limit).
+        Without them it buys only what rests at the best ask.
+        """
         if price is None or not (0 < price < 1):
             return None, "no price"
         budget = min(config.MAX_PER_MARKET, self.cash(bot))
-        per = price + config.FEE_RATE * price * (1 - price)
-        n = int(min(math.floor(budget / per), math.floor(depth or 0)))
-        while n > 0 and n * price + fee(n, price) > budget + 1e-9:
-            n -= 1
-        if n < 1:
-            return None, "no depth" if not depth else "no cash"
+        if levels and limit is not None:
+            book = sorted((p, q) for p, q in levels if 0 < p < 1 and p <= limit + 1e-9)
+        else:
+            book = [(price, depth or 0)]
+        fills, spent = [], 0.0
+        for p, q in book:
+            left = budget - spent
+            per = p + config.FEE_RATE * p * (1 - p)
+            n = int(min(math.floor(left / per), math.floor(q)))
+            while n > 0 and n * p + fee(n, p) > left + 1e-9:
+                n -= 1
+            if n < 1:
+                if q >= 1:
+                    break  # out of budget: every later price costs more
+                continue
+            fills.append((p, n))
+            spent += n * p + fee(n, p)
+        if not fills:
+            return None, "no depth" if budget >= 1 else "no cash"
+        n = sum(c for _, c in fills)
+        cost = round(sum(p * c for p, c in fills), 2)
+        f = round(sum(fee(c, p) for p, c in fills), 2)
+        avg = round(cost / n, 4)
         tid = self.next_id()
         row = {"trade_id": tid, "opened_utc": iso(now), "bot": bot, "ticker": snap["ticker"],
-               "category": snap.get("category", ""), "side": side, "price": price,
-               "contracts": n, "cost": round(n * price, 2), "fee": fee(n, price),
+               "category": snap.get("category", ""), "side": side, "price": avg,
+               "contracts": n, "cost": cost, "fee": f,
                "forecast_prob": prob, "status": "open", "result": "", "payout": "",
                "pnl": "", "settled_utc": ""}
         self.new.append(row)
-        return tid, f"bought {n} {side} at {price:.2f}"
+        how = f" over {len(fills)} prices up to {fills[-1][0]:.2f}" if len(fills) > 1 else ""
+        return tid, f"bought {n} {side} at {avg:.2f}{how}"
 
     def flush(self, ledger):
         head = config.TABS["Trades"]
@@ -67,15 +90,19 @@ class Book:
 
 
 def choose_side(prob, snap):
-    """The trade rule: buy the side whose ask the forecast beats by at least EDGE."""
+    """The trade rule: buy the side whose ask the forecast beats by at least EDGE.
+
+    Returns (side, best ask, depth there, all ask levels, limit price) or None. The limit is the
+    highest price that still leaves the full edge, so walking the book never buys a worse bet.
+    """
     ya, na = snap.get("yes_ask"), snap.get("no_ask")
     e_yes = prob - ya if ya is not None else -1
     e_no = (1 - prob) - na if na is not None else -1
     if max(e_yes, e_no) < config.EDGE:
         return None
     if e_yes >= e_no:
-        return "YES", ya, snap.get("yes_ask_depth")
-    return "NO", na, snap.get("no_ask_depth")
+        return "YES", ya, snap.get("yes_ask_depth"), snap.get("yes_ask_levels"), prob - config.EDGE
+    return "NO", na, snap.get("no_ask_depth"), snap.get("no_ask_levels"), (1 - prob) - config.EDGE
 
 
 # ---------- forecasts ----------
@@ -112,8 +139,9 @@ def process_forecasts(ledger, snaps, now, book):
                     if pick is None:
                         check = "ok, no edge"
                     else:
-                        side, price, depth = pick
-                        tid, note = book.open_position(now, bot, snap, side, price, depth, prob)
+                        side, price, depth, levels, limit = pick
+                        tid, note = book.open_position(now, bot, snap, side, price, depth, prob,
+                                                       levels, limit)
                         check = f"ok, {note}"
                         tid = tid or ""
             n_new += 1
